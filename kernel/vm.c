@@ -243,6 +243,51 @@ void freewalk(pagetable_t pagetable) {
   kfree((void *)pagetable);
 }
 
+void pteprint(pte_t pte, int idx, int level, uint64 va) {
+  for(int i=0;i<level;i++){
+    printf("||   ");
+  }
+  if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+    uint64 pa = PTE2PA(pte);
+    printf("||idx: %d: pa: %p, flags: ----\n", idx, pa);
+
+  } else {
+    uint64 pa = PTE2PA(pte);
+    printf("||idx: %d: va: %p -> pa: %p, flags: ",idx, va, pa);
+    if(pte & PTE_R) printf("r");
+    else printf("-");
+    if(pte & PTE_W) printf("w");
+    else printf("-");
+    if(pte & PTE_X) printf("x");
+    else printf("-");
+    if(pte & PTE_U) printf("u");
+    else printf("-");
+    printf("\n");
+  }
+
+}
+
+void vmprint(pagetable_t pagetable, int level, uint64 va) {
+  if(level == 0){
+    printf("page table %p\n",pagetable);
+  }
+  //遍历根页表
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      //读写执行全为0,可以认定非叶节点
+      uint64 child = PTE2PA(pte);
+      uint64 va0 = (va << 9) | i;
+      pteprint(pte, i, level, va);
+      vmprint((pagetable_t)child, level+1, va0);
+    } else if(pte & PTE_V){
+      uint64 va0 = ((va << 9) | i) << 12;
+      pteprint(pte, i, level, va0);
+    }
+  }
+}
+
+
 // Free user memory pages,
 // then free page-table pages.
 void uvmfree(pagetable_t pagetable, uint64 sz) {
