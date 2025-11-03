@@ -52,6 +52,28 @@ void kvminithart() {
   sfence_vma();
 }
 
+void kpgtblmap(pagetable_t pgtbl, uint64 va, uint64 pa, uint64 sz, int perm) {
+  if(mappages(pgtbl, va, sz, pa, perm) != 0) panic("kpgtblmap");
+}
+
+pagetable_t create_kpgtbl() {
+  pagetable_t kpgtbl = (pagetable_t)kalloc();
+  memset(kpgtbl, 0, PGSIZE);
+  kpgtblmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  kpgtblmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  kpgtblmap(kpgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  kpgtblmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
+  kpgtblmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext, PTE_R | PTE_W);
+  kpgtblmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  return kpgtbl;
+
+}
+
+void swtchpgtbl(pagetable_t pgtbl) {
+  w_satp(MAKE_SATP(pgtbl));
+  sfence_vma();
+}
+
 // Return the address of the PTE in page table pagetable
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page-table pages.
@@ -243,6 +265,18 @@ void freewalk(pagetable_t pagetable) {
   kfree((void *)pagetable);
 }
 
+void kernel_freepageable(pagetable_t pagetable) {
+  for(int i=0;i<512;i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      uint64 child = PTE2PA(pte);
+      kernel_freepageable((pagetable_t)child);
+      pagetable[i] = 0;
+    }
+  }
+  kfree((void *)pagetable);
+}
+
 void pteprint(pte_t pte, int idx, int level, uint64 va) {
   for(int i=0;i<level;i++){
     printf("||   ");
@@ -324,6 +358,40 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz) {
 err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+}
+
+int uvmtokvm(pagetable_t user, pagetable_t kernel, uint64 oldsz, uint64 newsz) {
+  pte_t *pte0, *pte1;
+  uint64 pa, i, max;
+  uint flags;
+
+  if(newsz > PLIC) panic("uvmtokvm: sz should not get over plic");
+
+  int flag = newsz<oldsz;
+  i = flag?newsz:oldsz;
+  max = flag?oldsz:newsz;
+
+  for (; i < max; i+=PGSIZE) {
+    if (flag) {
+      pte1 = walk(kernel, i, 0);
+      *pte1 = *pte1 & ~PTE_V;
+      continue;
+    }
+    if ((pte0 = walk(user, i, 0)) == 0) panic("uvmtokvm: pte should exist");
+    if ((*pte0 & PTE_V) == 0) panic("uvmtokvm: page not present");
+    pa = PTE2PA(*pte0);
+    flags = PTE_FLAGS(*pte0);
+    flags = flags & ~PTE_U;
+    if ((pte1 = walk(kernel, i, 0)) == 0){
+      kpgtblmap(kernel, i, pa, PGSIZE, flags);
+    } else if (*pte0 != *pte1) {
+      //已经存在映射，但是有修改，相应的修改
+      *pte1 = *pte0 & ~PTE_U; 
+    }
+
+  }
+  return 0;
+  
 }
 
 // mark a PTE invalid for user access.
