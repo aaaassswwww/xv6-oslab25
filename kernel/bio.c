@@ -52,15 +52,15 @@ void binit(void)
 
   }
 
-  uint i = 0;
+  // uint i = 0;
   // Create linked list of buffers
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    b->next = bcache.hash[i].next;
-    b->prev = &bcache.hash[i];
+    b->next = bcache.hash[0].next;
+    b->prev = &bcache.hash[0];
     initsleeplock(&b->lock, "buffer");
-    bcache.hash[i].next->prev = b;
-    bcache.hash[i].next = b;
-    i = (i + 1) % NBUCKETS;
+    bcache.hash[0].next->prev = b;
+    bcache.hash[0].next = b;
+    // i = (i + 1) % NBUCKETS;
   }
 }
 
@@ -90,9 +90,8 @@ static struct buf* bget(uint dev, uint blockno) {
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
   //先在当前桶中寻找空闲块
-  for(b = bcache.hash[bucket].next; b != &bcache.hash[bucket]; b = b->next){
+  for(b = bcache.hash[bucket].prev; b != &bcache.hash[bucket]; b = b->prev){
     if(b->refcnt == 0) {
-      break;
       b->dev = dev;
       b->blockno = blockno;
       b->valid = 0;
@@ -133,7 +132,7 @@ static struct buf* bget(uint dev, uint blockno) {
 
       acquire(&bcache.lock[other_bucket]);
 
-      for(b = bcache.hash[other_bucket].next; b != &bcache.hash[other_bucket]; b = b->next){
+      for(b = bcache.hash[other_bucket].prev; b != &bcache.hash[other_bucket]; b = b->prev){
         if(b->refcnt == 0) {
           //将块移动到对应桶
           b->prev->next = b->next;
@@ -144,7 +143,14 @@ static struct buf* bget(uint dev, uint blockno) {
           b->next = bcache.hash[bucket].next;
           bcache.hash[bucket].next->prev = b;
           bcache.hash[bucket].next = b;
-          goto found;
+          b->dev = dev;
+          b->blockno = blockno;
+          b->valid = 0;
+          b->refcnt = 1;
+          release(&bcache.lock[bucket]);
+          acquiresleep(&b->lock);
+          return b;
+
         }
       }
 
@@ -164,14 +170,14 @@ static struct buf* bget(uint dev, uint blockno) {
     panic("bget: no buffers");
   // }
 
-found:
-    b->dev = dev;
-    b->blockno = blockno;
-    b->valid = 0;
-    b->refcnt = 1;
-    release(&bcache.lock[bucket]);
-    acquiresleep(&b->lock);
-    return b;
+// found:
+//     b->dev = dev;
+//     b->blockno = blockno;
+//     b->valid = 0;
+//     b->refcnt = 1;
+//     release(&bcache.lock[bucket]);
+//     acquiresleep(&b->lock);
+//     return b;
 
 }
 
