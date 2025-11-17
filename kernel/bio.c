@@ -52,15 +52,15 @@ void binit(void)
 
   }
 
-  // uint i = 0;
+  uint i = 0;
   // Create linked list of buffers
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    b->next = bcache.hash[0].next;
-    b->prev = &bcache.hash[0];
+    b->next = bcache.hash[i].next;
+    b->prev = &bcache.hash[i];
     initsleeplock(&b->lock, "buffer");
-    bcache.hash[0].next->prev = b;
-    bcache.hash[0].next = b;
-    // i = (i + 1) % NBUCKETS;
+    bcache.hash[i].next->prev = b;
+    bcache.hash[i].next = b;
+    i = (i + 1) % NBUCKETS;
   }
 }
 
